@@ -5,9 +5,9 @@ const (
 	StatusGetLink
 	StatusGetQuantity
 	StatusGetEmail
-	StatusGetPhone
 	StatusGetAddress
 	StatusGetNote
+	StatusGetPhone
 	StatusGoodbye
 	StatusCheckOrder
 	StatusCancelOrder

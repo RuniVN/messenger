@@ -220,7 +220,7 @@ func main() {
 
 			case model.StatusGetEmail:
 				if isValidEmail(m.Text) {
-					userSession.Status = model.StatusGetPhone
+					userSession.Status = model.StatusGetAddress
 					err = db.Save(userSession).Error
 					if err != nil {
 						fmt.Println("Cannot save user session")
@@ -231,10 +231,36 @@ func main() {
 						fmt.Println("Cannot update email for order")
 					}
 
-					r.Text("Bạn cho mình xin số điện thoại bạn nhé")
+					r.Text("Bạn cho mình địa chỉ mà bạn muốn nhận hàng.")
 				} else {
 					r.Text("Hình như nó không phải email bạn ơi")
 				}
+			case model.StatusGetAddress:
+				userSession.Status = model.StatusGetNote
+				err = db.Save(userSession).Error
+				if err != nil {
+					fmt.Println("Cannot save user session")
+					return
+				}
+				err = db.Model(&model.Order{}).Where("fid = ?", m.Sender.ID).Update("address", m.Text).Error
+				if err != nil {
+					fmt.Println("Cannot update address for order")
+				}
+
+				r.Text("Bạn có điều gì cần lưu ý trong đơn hàng này không?")
+			case model.StatusGetNote:
+				userSession.Status = model.StatusGetPhone
+				err = db.Save(userSession).Error
+				if err != nil {
+					fmt.Println("Cannot save user session")
+					return
+				}
+				err = db.Model(&model.Order{}).Where("fid = ?", m.Sender.ID).Update("note", m.Text).Error
+				if err != nil {
+					fmt.Println("Cannot update email for order")
+				}
+
+				r.Text("Bạn cho mình xin số điện thoại bạn nhé")
 			case model.StatusGetPhone:
 				if isValidPhone(m.Text) {
 					userSession.Status = model.StatusGoodbye
@@ -275,12 +301,14 @@ func main() {
 					}
 
 					orderMap := map[string]interface{}{
-						"name":        p.FirstName,
+						"name":        p.FirstName + " " + p.LastName,
 						"fid":         strconv.Itoa(int(m.Sender.ID)),
-						"phone":       order.Phone,
+						"phone":       m.Text,
 						"email":       order.Email,
 						"order_code":  orderCode,
 						"order_items": orderItems,
+						"note":        order.Note,
+						"address":     order.Address,
 					}
 
 					body, err := json.Marshal(&orderMap)
