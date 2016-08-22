@@ -228,7 +228,8 @@ type StructuredMessageElement struct {
 
 // StructuredMessageButton is a response containing buttons
 type StructuredMessageButton struct {
-	Type  string `json:"type"`
-	URL   string `json:"url"`
-	Title string `json:"title"`
+	Type    string `json:"type"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Payload string `json:"playload"`
 }

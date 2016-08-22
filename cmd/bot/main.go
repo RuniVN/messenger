@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/RuniVN/messenger"
 	"github.com/RuniVN/messenger/model"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/paked/configure"
-	"github.com/paked/messenger"
 	uuid "github.com/satori/go.uuid"
 )
 
