@@ -231,5 +231,5 @@ type StructuredMessageButton struct {
 	Type    string `json:"type"`
 	URL     string `json:"url"`
 	Title   string `json:"title"`
-	Payload string `json:"playload"`
+	Payload string `json:"payload"`
 }

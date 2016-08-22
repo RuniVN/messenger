@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,15 +11,15 @@ import (
 
 	"github.com/RuniVN/messenger"
 	"github.com/RuniVN/messenger/model"
+	"github.com/carlescere/scheduler"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/paked/configure"
-	uuid "github.com/satori/go.uuid"
 )
 
 var (
 	conf        = configure.New()
-	verifyToken = conf.String("verify-token", "delivrto", "The token used to verify facebook")
+	verifyToken = conf.String("verify-token", os.Getenv("DELIVR_VERIFY_TOKEN"), "The token used to verify facebook")
 	verify      = conf.Bool("should-verify", false, "Whether or not the app should verify itself")
 	pageToken   = conf.String("page-token", os.Getenv("DELIVR_ACCESS_TOKEN"), "The token that is used to verify the page on facebook")
 )
@@ -57,7 +59,31 @@ func main() {
 				fmt.Println("Cannot send to recipient")
 			}
 		case "Search":
+			err = r.Text("Xin bạn cho biết mã đơn hàng")
+			if err != nil {
+				fmt.Println("Cannot send to recipient")
+			}
+
+			userSession.Status = model.StatusCheckOrder
+			err = db.Save(userSession).Error
+			if err != nil {
+				fmt.Sprintln("Cannot save user session %s", err.Error())
+				handleError(r)
+				return
+			}
 		case "Cancel":
+			err = r.Text("Bạn đã chọn hủy đơn hàng. Xin cho biết mã đơn hàng.")
+			if err != nil {
+				fmt.Println("Cannot send to recipient")
+			}
+
+			userSession.Status = model.StatusCancelOrder
+			err = db.Save(userSession).Error
+			if err != nil {
+				fmt.Sprintln("Cannot save user session %s", err.Error())
+				handleError(r)
+				return
+			}
 		case "Yes":
 			userSession.Status = model.StatusGreeting
 			err = db.Save(userSession).Error
@@ -75,6 +101,7 @@ func main() {
 				return
 			}
 			r.Text("Vui lòng cho chúng tôi xin email của bạn")
+
 		}
 	})
 
@@ -116,6 +143,7 @@ func main() {
 			userSession.FID = m.Sender.ID
 			userSession.Status = model.StatusGreeting
 			userSession.IsActive = true
+			userSession.Time = time.Now()
 
 			err = db.Create(&userSession).Error
 			if err != nil {
@@ -150,7 +178,6 @@ func main() {
 				if isValidQuantity(m.Text) {
 					var order model.Order
 					order.FID = m.Sender.ID
-					order.UUID = uuid.NewV4().String()
 					err = db.Create(&order).Error
 					if err != nil {
 						fmt.Println("Cannot create order")
@@ -213,20 +240,199 @@ func main() {
 					userSession.Status = model.StatusGoodbye
 					err = db.Save(userSession).Error
 					if err != nil {
-						fmt.Println("Cannot save user session")
+						fmt.Sprintln("Cannot save user session %s", err.Error())
 						return
 					}
-					err = db.Model(&model.Order{}).Where("fid = ?", m.Sender.ID).Update("phone", m.Text).Error
+
+					var order model.Order
+					err = db.Where("fid = ?", m.Sender.ID).First(&order).Error
 					if err != nil {
-						fmt.Println("Cannot update phone for order")
+						fmt.Sprintln("Cannot get order %v", err.Error())
+						handleError(r)
+						return
 					}
-					r.Text("Xong rồi. Mình đã ghi chú lại đơn hàng của bạn. Bạn đợi tin nhé!")
+
+					orderCode, err := generateHash()
+					if err != nil {
+						fmt.Sprintln("Cannot gen hashID %v", err.Error())
+						handleError(r)
+						return
+					}
+					var items []model.Item
+					err = db.Where("order_id = ?", order.ID).Find(&items).Error
+					if err != nil {
+						fmt.Sprintln("Cannot get item %v", err.Error())
+						handleError(r)
+						return
+					}
+					var orderItems = make([]map[string]interface{}, 0)
+					for _, v := range items {
+						orderItem := map[string]interface{}{
+							"link":     v.Link,
+							"quantity": v.Quantity,
+						}
+						orderItems = append(orderItems, orderItem)
+					}
+
+					orderMap := map[string]interface{}{
+						"name":        p.FirstName,
+						"fid":         strconv.Itoa(int(m.Sender.ID)),
+						"phone":       order.Phone,
+						"email":       order.Email,
+						"order_code":  orderCode,
+						"order_items": orderItems,
+					}
+
+					body, err := json.Marshal(&orderMap)
+					if err != nil {
+						fmt.Sprintln("Cannot marshal order %s", err.Error())
+						handleError(r)
+						return
+					}
+
+					req, err := http.NewRequest("POST", "http://localhost:8008/api/bot/orders", bytes.NewBuffer(body))
+					if err != nil {
+						fmt.Sprintln("Cannot create request to create order %v", err.Error())
+						handleError(r)
+						return
+					}
+
+					req.Header.Set("Content-Type", "application/json")
+
+					client := &http.Client{}
+					resp, err := client.Do(req)
+					if err != nil {
+						fmt.Sprintln("Cannot do request %v", err.Error())
+						handleError(r)
+						return
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode == 200 {
+						r.Text("Xong rồi. Mình đã ghi chú lại đơn hàng của bạn. Đơn hàng của bạn có mã là: " + orderCode + ". Sẽ có nhân viên của chúng tôi liên lạc với bạn. Bạn đợi tin nhé!")
+						err = db.Delete(&order).Error
+						if err != nil {
+							fmt.Sprintln("Cannot delete order, %v", err.Error())
+
+						}
+
+					} else {
+						fmt.Sprintln("Cannot create order, response status: %d", resp.Status)
+						handleError(r)
+						return
+					}
+
 				} else {
 					r.Text("Bạn nhập đúng số phone giùm mình nha")
 				}
 
 			case model.StatusGoodbye:
+				userSession.Status = model.StatusGreeting
+				err = db.Save(userSession).Error
+				if err != nil {
+					fmt.Println("Cannot save user session")
+					return
+				}
 
+				var buttonTemplate []messenger.StructuredMessageButton
+				buttonBuy := messenger.StructuredMessageButton{Type: "postback", URL: "", Title: "Mua hàng", Payload: "Buy"}
+				buttonSearch := messenger.StructuredMessageButton{Type: "postback", URL: "", Title: "Tra cứu đơn hàng", Payload: "Search"}
+				buttonCancel := messenger.StructuredMessageButton{Type: "postback", URL: "", Title: "Hủy mua hàng", Payload: "Cancel"}
+				buttonTemplate = append(buttonTemplate, buttonBuy)
+				buttonTemplate = append(buttonTemplate, buttonCancel)
+				buttonTemplate = append(buttonTemplate, buttonSearch)
+
+				err = r.ButtonTemplate("Chào bạn, đây là delivr.to, bạn muốn làm gì?", &buttonTemplate)
+				if err != nil {
+					fmt.Println("Cannot send to recipient")
+					return
+				}
+			case model.StatusCheckOrder:
+				req, err := http.NewRequest("GET", "http://localhost:8008/api/bot/orders?order_code="+m.Text, nil)
+				if err != nil {
+					fmt.Sprintln("Cannot create request to check order %s", err.Error())
+					handleError(r)
+					return
+				}
+
+				req.Header.Set("Content-Type", "application/json")
+
+				client := &http.Client{}
+				resp, err := client.Do(req)
+				if err != nil {
+					fmt.Sprintln("Cannot do request %s", err.Error())
+					handleError(r)
+					return
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != 200 {
+					if resp.StatusCode == 500 {
+						r.Text("Xin lỗi, chúng tôi không thể tìm thấy thông tin về đơn hàng này.")
+						return
+					} else {
+						fmt.Sprintln("Cannot check order, response status: %d", resp.Status)
+						handleError(r)
+						return
+					}
+				}
+
+				type Response struct {
+					OrderStatus string `json:"order_status"`
+				}
+				var response Response
+
+				err = json.NewDecoder(resp.Body).Decode(&response)
+				if err != nil {
+					fmt.Sprintln("Cannot decode response %s", err.Error())
+					handleError(r)
+					return
+				}
+				r.Text("Chào bạn, tình trạng đơn hàng của bạn là: " + response.OrderStatus)
+
+				userSession.Status = model.StatusGoodbye
+				err = db.Save(userSession).Error
+				if err != nil {
+					fmt.Sprintln("Cannot save user session %s", err.Error())
+					return
+				}
+			case model.StatusCancelOrder:
+				req, err := http.NewRequest("DELETE", "http://localhost:8008/api/bot/orders?order_code="+m.Text, nil)
+				if err != nil {
+					fmt.Sprintln("Cannot create request to delete order %s", err.Error())
+					handleError(r)
+					return
+				}
+
+				req.Header.Set("Content-Type", "application/json")
+
+				client := &http.Client{}
+				resp, err := client.Do(req)
+				if err != nil {
+					fmt.Sprintln("Cannot do request %s", err.Error())
+					handleError(r)
+					return
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != 200 {
+					if resp.StatusCode == 500 {
+						r.Text("Xin lỗi, chúng tôi không thể tìm thấy thông tin về đơn hàng này.")
+						return
+					} else {
+						fmt.Sprintln("Cannot check order, response status: %d", resp.Status)
+						handleError(r)
+						return
+					}
+				}
+
+				r.Text("Đơn hàng của bạn đã được hủy thành công.")
+				userSession.Status = model.StatusGoodbye
+				err = db.Save(userSession).Error
+				if err != nil {
+					fmt.Sprintln("Cannot save user session %s", err.Error())
+					return
+				}
 			}
 
 		}
@@ -241,6 +447,8 @@ func main() {
 	fmt.Println("Serving messenger bot on localhost:8080")
 
 	http.ListenAndServe("localhost:8080", client.Handler())
+
+	scheduler.Every().Day().At("00:01").Run(jobClearSession)
 }
 
 func handleDatabaseStuff() {
@@ -278,6 +486,7 @@ func checkUserExist(fid int64) bool {
 	}
 	return false
 }
+
 func checkUserInSession(fid int64) bool {
 	var count int
 	err := db.Model(&model.UserSession{}).Where("fid = ? AND is_active = ?", strconv.Itoa(int(fid)), "true").Count(&count).Error
@@ -289,4 +498,15 @@ func checkUserInSession(fid int64) bool {
 		return true
 	}
 	return false
+}
+
+func jobClearSession() {
+	err = db.Model(&model.UserSession{}).Where("time < ?", time.Now().AddDate(0, 0, -1)).Update("is_active", false).Error
+	if err != nil {
+		fmt.Println("Cannot update user session")
+	}
+}
+
+func handleError(r *messenger.Response) {
+	r.Text("Xin lỗi, hiện tại delivr không thể giải quyết đơn hàng của bạn. ")
 }

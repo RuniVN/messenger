@@ -1,17 +1,36 @@
 package main
 
+import (
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/asaskevich/govalidator"
+	hashids "github.com/speps/go-hashids"
+)
+
 func isValidLink(link string) bool {
-	return true
+	return govalidator.IsURL(link)
 }
 
 func isValidQuantity(quantity string) bool {
-	return true
+	return govalidator.IsFloat(quantity)
 }
 
 func isValidEmail(email string) bool {
-	return true
+	email = strings.ToLower(email)
+	return govalidator.IsEmail(email)
 }
 
 func isValidPhone(phone string) bool {
-	return true
+	re := regexp.MustCompile(`^[0-9\-\+]{9,15}$`)
+	return re.MatchString(phone)
+}
+
+func generateHash() (string, error) {
+	hd := hashids.NewData()
+	hd.Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+	h := hashids.NewWithData(hd)
+	timeStamp := time.Now().UnixNano() / int64(time.Millisecond)
+	return h.Encode([]int{int(timeStamp)})
 }

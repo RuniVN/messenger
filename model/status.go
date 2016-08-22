@@ -6,5 +6,9 @@ const (
 	StatusGetQuantity
 	StatusGetEmail
 	StatusGetPhone
+	StatusGetAddress
+	StatusGetNote
 	StatusGoodbye
+	StatusCheckOrder
+	StatusCancelOrder
 )
