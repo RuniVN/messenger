@@ -28,11 +28,6 @@ var db *gorm.DB
 var err error
 
 func main() {
-	conf.Use(configure.NewFlag())
-	conf.Use(configure.NewEnvironment())
-	conf.Use(configure.NewJSONFromFile("config.json"))
-
-	conf.Parse()
 	handleDatabaseStuff()
 
 	// Create a new messenger client
@@ -480,7 +475,19 @@ func main() {
 }
 
 func handleDatabaseStuff() {
-	db, err = gorm.Open("postgres", "postgres://postgres:qq123123@dockerhost:5432/delivr-bot?sslmode=disable&connect_timeout=10")
+	file, err := os.Open("config.json")
+	if err != nil {
+		panic("Error opening config file=config.json" + ", err=" + err.Error())
+	}
+
+	decoder := json.NewDecoder(file)
+	config := model.Config{}
+	err = decoder.Decode(&config)
+	if err != nil {
+		panic("Error decoding config file=config.json" + ", err=" + err.Error())
+	}
+
+	db, err := gorm.Open("postgres", config.DataSource)
 	if err != nil {
 		panic(err)
 	}
